@@ -16,10 +16,9 @@ from torch.autograd import Variable
 from model import _netlocalD,_netG
 import utils
 
-
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset',  default='streetview', help='cifar10 | lsun | imagenet | folder | lfw ')
+# parser.add_argument('--dataroot',  default='dataset/train', help='path to dataset')
 parser.add_argument('--dataroot',  default='dataset/train', help='path to dataset')
 parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
 parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
@@ -76,6 +75,7 @@ if opt.dataset in ['imagenet', 'folder', 'lfw']:
                                    transforms.Scale(opt.imageSize),
                                    transforms.CenterCrop(opt.imageSize),
                                    transforms.ToTensor(),
+                                   # 可将[0.0, 1.0]归一化到[-1.0, -1.0]
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                                ]))
 elif opt.dataset == 'lsun':
@@ -123,7 +123,6 @@ def weights_init(m):
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0)
 
-
 resume_epoch=0
 
 netG = _netG(opt)
@@ -160,11 +159,9 @@ if opt.cuda:
     input_real, input_cropped,label = input_real.cuda(),input_cropped.cuda(), label.cuda()
     real_center = real_center.cuda()
 
-
 input_real = Variable(input_real)
 input_cropped = Variable(input_cropped)
 label = Variable(label)
-
 
 real_center = Variable(real_center)
 
@@ -175,11 +172,14 @@ optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 for epoch in range(resume_epoch,opt.niter):
     for i, data in enumerate(dataloader, 0):
         real_cpu, _ = data
+        # 中间部分
         real_center_cpu = real_cpu[:,:,int(opt.imageSize/4):int(opt.imageSize/4)+int(opt.imageSize/2),int(opt.imageSize/4):int(opt.imageSize/4)+int(opt.imageSize/2)]
         batch_size = real_cpu.size(0)
         input_real.data.resize_(real_cpu.size()).copy_(real_cpu)
         input_cropped.data.resize_(real_cpu.size()).copy_(real_cpu)
         real_center.data.resize_(real_center_cpu.size()).copy_(real_center_cpu)
+        # 为什么不直接置为0，而是采用117/104/123?
+        # 为什么四周缩了几个像素？
         input_cropped.data[:,0,int(opt.imageSize/4+opt.overlapPred):int(opt.imageSize/4+opt.imageSize/2-opt.overlapPred),int(opt.imageSize/4+opt.overlapPred):int(opt.imageSize/4+opt.imageSize/2-opt.overlapPred)] = 2*117.0/255.0 - 1.0
         input_cropped.data[:,1,int(opt.imageSize/4+opt.overlapPred):int(opt.imageSize/4+opt.imageSize/2-opt.overlapPred),int(opt.imageSize/4+opt.overlapPred):int(opt.imageSize/4+opt.imageSize/2-opt.overlapPred)] = 2*104.0/255.0 - 1.0
         input_cropped.data[:,2,int(opt.imageSize/4+opt.overlapPred):int(opt.imageSize/4+opt.imageSize/2-opt.overlapPred),int(opt.imageSize/4+opt.overlapPred):int(opt.imageSize/4+opt.imageSize/2-opt.overlapPred)] = 2*123.0/255.0 - 1.0
@@ -187,24 +187,25 @@ for epoch in range(resume_epoch,opt.niter):
         # train with real
         netD.zero_grad()
         label.data.resize_(batch_size).fill_(real_label)
-
+        # 对D网路，训练真的中间部分，注意：传的是real_center
         output = netD(real_center)
         errD_real = criterion(output, label)
         errD_real.backward()
         D_x = output.data.mean()
-
+        
         # train with fake
         # noise.data.resize_(batch_size, nz, 1, 1)
         # noise.data.normal_(0, 1)
+        # G网络传入抠掉中间部分的图，生成预测的中间部分
         fake = netG(input_cropped)
         label.data.fill_(fake_label)
+        # 对D网络，训练G网络生成的中间部分
         output = netD(fake.detach())
         errD_fake = criterion(output, label)
         errD_fake.backward()
         D_G_z1 = output.data.mean()
         errD = errD_real + errD_fake
         optimizerD.step()
-
 
         ############################
         # (2) Update G network: maximize log(D(G(z)))
@@ -219,7 +220,7 @@ for epoch in range(resume_epoch,opt.niter):
         wtl2Matrix = real_center.clone()
         wtl2Matrix.data.fill_(wtl2*overlapL2Weight)
         wtl2Matrix.data[:,:,int(opt.overlapPred):int(opt.imageSize/2 - opt.overlapPred),int(opt.overlapPred):int(opt.imageSize/2 - opt.overlapPred)] = wtl2
-        
+            
         errG_l2 = (fake-real_center).pow(2)
         errG_l2 = errG_l2 * wtl2Matrix
         errG_l2 = errG_l2.mean()
@@ -227,13 +228,15 @@ for epoch in range(resume_epoch,opt.niter):
         errG = (1-wtl2) * errG_D + wtl2 * errG_l2
 
         errG.backward()
-
+        
         D_G_z2 = output.data.mean()
         optimizerG.step()
-
+        
         print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f / %.4f l_D(x): %.4f l_D(G(z)): %.4f'
               % (epoch, opt.niter, i, len(dataloader),
                  errD.data[0], errG_D.data[0],errG_l2.data[0], D_x,D_G_z1, ))
+         # 为什么保存下来的图片很暗？？？
+         # 不用将结果从[-1,1]恢复到0-255么？
         if i % 100 == 0:
             vutils.save_image(real_cpu,
                     'result/train/real/real_samples_epoch_%03d.png' % (epoch))
@@ -243,8 +246,7 @@ for epoch in range(resume_epoch,opt.niter):
             recon_image.data[:,:,int(opt.imageSize/4):int(opt.imageSize/4+opt.imageSize/2),int(opt.imageSize/4):int(opt.imageSize/4+opt.imageSize/2)] = fake.data
             vutils.save_image(recon_image.data,
                     'result/train/recon/recon_center_samples_epoch_%03d.png' % (epoch))
-
-
+    
     # do checkpointing
     torch.save({'epoch':epoch+1,
                 'state_dict':netG.state_dict()},

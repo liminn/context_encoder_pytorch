@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 class _netG(nn.Module):
     def __init__(self, opt):
         super(_netG, self).__init__()

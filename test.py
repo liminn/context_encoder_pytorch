@@ -15,8 +15,6 @@ from torch.autograd import Variable
 
 from model import _netG
 
-
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset',  default='streetview', help='cifar10 | lsun | imagenet | folder | lfw ')
 parser.add_argument('--dataroot',  default='dataset/val', help='path to dataset')

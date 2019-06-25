@@ -56,7 +56,6 @@ netG.eval()
 transform = transforms.Compose([transforms.ToTensor(),
                                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-
 image = utils.load_image(opt.test_image, opt.imageSize)
 image = transform(image)
 image = image.repeat(1, 1, 1, 1)
